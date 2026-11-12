@@ -74,6 +74,69 @@ function parse(html) {
   return [...shows.values()];
 }
 
+// ---- Filtering -------------------------------------------------------------
+// 1) Season packs ("S01 Pack") are dropped.
+// 2) Re-posts of old episodes are dropped: each listed episode's air date is
+//    looked up on Cinemeta and must be within MAX_AGE_DAYS.
+const FILTER_PACKS = process.env.FILTER_PACKS !== '0';
+const MAX_AGE_DAYS = process.env.MAX_AGE_DAYS === undefined ? 14 : +process.env.MAX_AGE_DAYS; // 0 = no date filter
+const KEEP_UNKNOWN = process.env.KEEP_UNKNOWN !== '0'; // keep shows/episodes Cinemeta has no date for
+const CINEMETA = 'https://v3-cinemeta.strem.io/meta/series/';
+
+async function airDates(id) {
+  // Map "season:episode" -> timestamp, or null when the lookup fails.
+  try {
+    const res = await fetch(`${CINEMETA}${id}.json`, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return null;
+    const videos = ((await res.json()).meta || {}).videos || [];
+    const map = new Map();
+    for (const v of videos) {
+      const t = Date.parse(v.released || v.firstAired || '');
+      if (!Number.isNaN(t)) map.set(`${+v.season}:${+(v.episode ?? v.number)}`, t);
+    }
+    return map;
+  } catch { return null; }
+}
+
+async function filterShows(shows, now = Date.now()) {
+  const cutoff = now - MAX_AGE_DAYS * 86400000;
+  const stats = { packs: 0, old: 0, unknown: 0 };
+  const out = new Array(shows.length).fill(null);
+  let next = 0;
+
+  async function worker() {
+    while (next < shows.length) {
+      const i = next++;
+      const show = shows[i];
+      let eps = show.episodes;
+      if (FILTER_PACKS) {
+        eps = eps.filter((t) => /^S\d+E\d+/i.test(t));
+        if (!eps.length) { stats.packs++; continue; }
+      }
+      if (MAX_AGE_DAYS > 0) {
+        const dates = await airDates(show.id);
+        if (!dates || !dates.size) {
+          stats.unknown++;
+          if (!KEEP_UNKNOWN) continue;
+        } else {
+          eps = eps.filter((t) => {
+            const m = /^S(\d+)E(\d+)/i.exec(t);
+            if (!m) return false;                       // pack: cannot be dated
+            const d = dates.get(`${+m[1]}:${+m[2]}`);
+            return d === undefined ? KEEP_UNKNOWN : d >= cutoff;
+          });
+          if (!eps.length) { stats.old++; continue; }
+        }
+      }
+      out[i] = { ...show, episodes: eps };
+    }
+  }
+  await Promise.all(Array.from({ length: 8 }, worker));
+  const kept = out.filter(Boolean);
+  console.log(`filter: ${shows.length} shows -> ${kept.length} kept (packs only: ${stats.packs}, old re-posts: ${stats.old}, no date info: ${stats.unknown})`);
+  return kept;
+}
+
 function toMeta(show) {
   const eps = show.episodes.slice(0, 6).join(', ') + (show.episodes.length > 6 ? ', …' : '');
   return {
@@ -87,7 +150,7 @@ function toMeta(show) {
 }
 
 async function scrape() {
-  return parse(await fetchHtml()).map(toMeta);
+  return (await filterShows(parse(await fetchHtml()))).map(toMeta);
 }
 
-module.exports = { scrape, parse, toMeta };
+module.exports = { scrape, parse, toMeta, filterShows };
