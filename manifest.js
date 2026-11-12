@@ -4,12 +4,12 @@ const PAGE_SIZE = 100;
 
 const manifest = {
   id: 'community.rmz.latestepisodes',
-  version: '1.0.0',
-  name: 'RMZ Latest Episodes',
+  version: '1.1.0',
+  name: 'Calendar Episodes',
   description: 'Shows with the newest episodes listed on rmz.cr, refreshed hourly.',
   resources: ['catalog'],
   types: ['series'],
-  catalogs: [{ type: 'series', id: CATALOG_ID, name: 'RMZ Latest Episodes', extra: [{ name: 'skip', isRequired: false }] }],
+  catalogs: [{ type: 'series', id: CATALOG_ID, name: 'Calendar Episodes', extra: [{ name: 'skip', isRequired: false }] }],
   idPrefixes: ['tt'],
   behaviorHints: { configurable: false },
 };
