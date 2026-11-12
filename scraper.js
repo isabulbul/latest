@@ -55,7 +55,9 @@ function parse(html) {
   const shows = new Map();
   const liRe = /<li>([\s\S]*?)<\/li>/g;
   let m;
+  let pos = 0; // position in the site's list, newest first
   while ((m = liRe.exec(section))) {
+    pos++;
     const li = m[1];
     const imdb = /longdesc="\/i\/(\d+)"/.exec(li);
     const link = /<a href="([^"]+)" title="([^"]*)"/.exec(li);
@@ -64,11 +66,11 @@ function parse(html) {
     const tag = (/<b>([^<]+)<\/b>/.exec(li) || [])[1] || '';
     let show = shows.get(id);
     if (!show) {
-      show = { id, name: decode(link[2]), url: link[1], episodes: [] };
+      show = { id, name: decode(link[2]), url: link[1], episodes: [], pos: {} };
       shows.set(id, show);
     }
     const t = decode(tag);
-    if (t && !show.episodes.includes(t)) show.episodes.push(t);
+    if (t && !show.episodes.includes(t)) { show.episodes.push(t); show.pos[t] = pos; }
   }
   if (!shows.size) throw new Error('No episodes parsed - site markup may have changed');
   return [...shows.values()];
@@ -133,7 +135,10 @@ async function filterShows(shows, now = Date.now()) {
     }
   }
   await Promise.all(Array.from({ length: 8 }, worker));
-  const kept = out.filter(Boolean);
+  // Order by the list position of each show's newest *surviving* entry, so a
+  // dropped pack or old re-post higher up does not pull the show forward.
+  const rank = (s) => Math.min(...s.episodes.map((t) => (s.pos && s.pos[t]) || Infinity));
+  const kept = out.filter(Boolean).sort((a, b) => rank(a) - rank(b));
   console.log(`filter: ${shows.length} shows -> ${kept.length} kept (packs only: ${stats.packs}, old re-posts: ${stats.old}, no date info: ${stats.unknown})`);
   if (dropped.old.length) console.log('dropped as old re-posts:\n  ' + dropped.old.sort().join('\n  '));
   if (dropped.packs.length) console.log('dropped as pack only:\n  ' + dropped.packs.sort().join('\n  '));
