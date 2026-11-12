@@ -1,0 +1,51 @@
+name: Refresh catalog
+
+on:
+  schedule:
+    - cron: '7 * * * *'   # hourly
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      flaresolverr:
+        image: ghcr.io/flaresolverr/flaresolverr:latest
+        ports: ['8191:8191']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Wait for FlareSolverr
+        run: |
+          for i in $(seq 1 30); do curl -sf http://localhost:8191/ >/dev/null && exit 0; sleep 2; done
+          echo "FlareSolverr did not start" && exit 1
+      - name: Scrape and build static addon
+        env:
+          FLARESOLVERR_URL: http://localhost:8191/v1
+        run: node build-static.js public
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
