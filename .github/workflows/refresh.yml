@@ -2,7 +2,7 @@ name: Refresh catalog
 
 on:
   schedule:
-    - cron: '27 * * * *'   # hourly
+    - cron: '37 * * * *'   # hourly
   workflow_dispatch:
   push:
     branches: [main]
