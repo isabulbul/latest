@@ -101,6 +101,7 @@ async function airDates(id) {
 async function filterShows(shows, now = Date.now()) {
   const cutoff = now - MAX_AGE_DAYS * 86400000;
   const stats = { packs: 0, old: 0, unknown: 0 };
+  const dropped = { packs: [], old: [] };
   const out = new Array(shows.length).fill(null);
   let next = 0;
 
@@ -111,7 +112,7 @@ async function filterShows(shows, now = Date.now()) {
       let eps = show.episodes;
       if (FILTER_PACKS) {
         eps = eps.filter((t) => /^S\d+E\d+/i.test(t));
-        if (!eps.length) { stats.packs++; continue; }
+        if (!eps.length) { stats.packs++; dropped.packs.push(show.name); continue; }
       }
       if (MAX_AGE_DAYS > 0) {
         const dates = await airDates(show.id);
@@ -125,7 +126,7 @@ async function filterShows(shows, now = Date.now()) {
             const d = dates.get(`${+m[1]}:${+m[2]}`);
             return d === undefined ? KEEP_UNKNOWN : d >= cutoff;
           });
-          if (!eps.length) { stats.old++; continue; }
+          if (!eps.length) { stats.old++; dropped.old.push(`${show.name} (${show.episodes.slice(0, 3).join(', ')})`); continue; }
         }
       }
       out[i] = { ...show, episodes: eps };
@@ -134,6 +135,8 @@ async function filterShows(shows, now = Date.now()) {
   await Promise.all(Array.from({ length: 8 }, worker));
   const kept = out.filter(Boolean);
   console.log(`filter: ${shows.length} shows -> ${kept.length} kept (packs only: ${stats.packs}, old re-posts: ${stats.old}, no date info: ${stats.unknown})`);
+  if (dropped.old.length) console.log('dropped as old re-posts:\n  ' + dropped.old.sort().join('\n  '));
+  if (dropped.packs.length) console.log('dropped as pack only:\n  ' + dropped.packs.sort().join('\n  '));
   return kept;
 }
 
