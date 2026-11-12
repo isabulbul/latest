@@ -1,0 +1,9 @@
+{
+  "name": "rmz-latest-addon",
+  "version": "1.0.0",
+  "description": "Stremio/Nuvio catalog addon: Latest Episodes from rmz.cr, refreshed hourly",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}
