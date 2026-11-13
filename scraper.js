@@ -255,7 +255,7 @@ function newestEpisode(episodes) {
   return best || episodes[0] || '';
 }
 
-const EP_IN_NAME = process.env.EP_IN_NAME !== '0'; // show "Title (S03E06)" on the board
+const EP_IN_NAME = process.env.EP_IN_NAME === '1'; // off: Nuvio already shows releaseInfo under the title
 
 function toMeta(show) {
   const eps = show.episodes.slice(0, 6).join(', ') + (show.episodes.length > 6 ? ', …' : '');

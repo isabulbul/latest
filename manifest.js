@@ -1,5 +1,5 @@
 'use strict';
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 1000; // whole list in one response; no paging
 
 // key = which list from the scraper feeds the catalog
 const CATALOGS = [
@@ -12,12 +12,12 @@ const CATALOG_ID = CATALOGS[0].id;
 
 const manifest = {
   id: 'community.rmz.latestepisodes',
-  version: '1.2.0',
+  version: '1.3.0',
   name: 'Calendar Episodes',
   description: 'Shows with the newest episodes listed on rmz.cr, refreshed hourly.',
   resources: ['catalog'],
   types: ['series'],
-  catalogs: CATALOGS.map((c) => ({ type: 'series', id: c.id, name: c.name, extra: [{ name: 'skip', isRequired: false }] })),
+  catalogs: CATALOGS.map((c) => ({ type: 'series', id: c.id, name: c.name })),
   idPrefixes: ['tt'],
   behaviorHints: { configurable: false },
 };
