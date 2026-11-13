@@ -170,9 +170,10 @@ function isDaily(info, now) {
   return days.size >= DAILY_MIN_DAYS ? `aired on ${days.size} of the last 14 days` : null;
 }
 
-// new       = the newest listed episode is in season 1
+// new       = season 1 whose first episode aired within NEW_DAYS
 // returning = season 2+ whose season premiere aired within RETURNING_DAYS
-// ongoing   = season 2+ further into its run
+// ongoing   = everything further into its run (any season)
+const NEW_DAYS = +process.env.NEW_DAYS || 14;
 const RETURNING_DAYS = +process.env.RETURNING_DAYS || 14;
 function classify(eps, info, now) {
   let season = 0;
@@ -183,10 +184,11 @@ function classify(eps, info, now) {
     if (+m[1] > season) { season = +m[1]; hasPremiere = false; }
     if (+m[1] === season && +m[2] === 1) hasPremiere = true;
   }
-  if (season <= 1) return 'new';
-  const premiere = info ? info.dates.get(`${season}:1`) : undefined;
-  if (premiere !== undefined) return premiere >= now - RETURNING_DAYS * DAY ? 'returning' : 'ongoing';
-  return hasPremiere ? 'returning' : 'ongoing';
+  const fresh = season <= 1 ? 'new' : 'returning';
+  const days = season <= 1 ? NEW_DAYS : RETURNING_DAYS;
+  const premiere = info ? info.dates.get(`${Math.max(season, 1)}:1`) : undefined;
+  if (premiere !== undefined) return premiere >= now - days * DAY ? fresh : 'ongoing';
+  return hasPremiere ? fresh : 'ongoing'; // no air date: go by whether episode 1 is in the list
 }
 
 async function filterShows(shows, now = Date.now()) {
