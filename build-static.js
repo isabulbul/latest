@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { scrape } = require('./scraper');
 const { manifest, CATALOGS, PAGE_SIZE } = require('./manifest');
+const EXTRA_EMPTY_PAGES = 200; // empty pages beyond the end of each list
 
 (async () => {
   const out = path.resolve(process.argv[2] || 'public');
@@ -19,8 +20,11 @@ const { manifest, CATALOGS, PAGE_SIZE } = require('./manifest');
     const items = lists[cat.key] || [];
     fs.mkdirSync(path.join(dir, cat.id), { recursive: true });
     write(path.join(dir, `${cat.id}.json`), { metas: items.slice(0, PAGE_SIZE) });
-    // Further pages, plus one empty page so clients know the list has ended.
-    for (let skip = PAGE_SIZE; skip < items.length + PAGE_SIZE; skip += PAGE_SIZE) {
+    // Static hosting cannot answer arbitrary ?skip values, and some clients
+    // (Nuvio) ask for the next page even when the first one held everything.
+    // Write an answer for every skip a client could send: the rest of the list
+    // (rarely needed) or an empty page, which tells the client the list ended.
+    for (let skip = 1; skip <= items.length + EXTRA_EMPTY_PAGES; skip++) {
       write(path.join(dir, cat.id, `skip=${skip}.json`), { metas: items.slice(skip, skip + PAGE_SIZE) });
     }
   }
