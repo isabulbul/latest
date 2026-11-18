@@ -141,6 +141,8 @@ const FILTER_DAILY = process.env.FILTER_DAILY === '1'; // off by default
 const DAILY_MIN_DAYS = +process.env.DAILY_MIN_DAYS || 5;
 const EXCLUDE_GENRES = (process.env.EXCLUDE_GENRES ?? 'Talk-Show,News').split(',').map((g) => g.trim().toLowerCase()).filter(Boolean);
 const CINEMETA = 'https://v3-cinemeta.strem.io/meta/series/';
+// Shows with any of these Cinemeta genres never enter the catalogs.
+const BLOCK_GENRES = (process.env.BLOCK_GENRES ?? 'Reality-TV').split(',').map((g) => g.trim().toLowerCase()).filter(Boolean);
 const DAY = 86400000;
 
 async function cinemeta(id) {
@@ -154,8 +156,8 @@ async function cinemeta(id) {
       const t = Date.parse(v.released || v.firstAired || '');
       if (!Number.isNaN(t)) dates.set(`${+v.season}:${+(v.episode ?? v.number)}`, t);
     }
-    const genres = (meta.genres || meta.genre || []).map((g) => String(g).toLowerCase());
-    return { dates, genres };
+    const names = (meta.genres || meta.genre || []).map((g) => String(g).trim()).filter(Boolean);
+    return { dates, genres: names.map((g) => g.toLowerCase()), genreNames: names };
   } catch { return null; }
 }
 
@@ -193,7 +195,7 @@ function classify(eps, info, now) {
 
 async function filterShows(shows, now = Date.now()) {
   const cutoff = now - MAX_AGE_DAYS * DAY;
-  const dropped = { packs: [], old: [], daily: [] };
+  const dropped = { packs: [], old: [], daily: [], genre: [] };
   let unknown = 0;
   const out = new Array(shows.length).fill(null);
   let next = 0;
@@ -214,6 +216,8 @@ async function filterShows(shows, now = Date.now()) {
           unknown++;
           if (!KEEP_UNKNOWN) continue;
         } else {
+          const banned = info.genres.find((g) => BLOCK_GENRES.includes(g));
+          if (banned) { dropped.genre.push(`${show.name} (${banned})`); continue; }
           const why = FILTER_DAILY && isDaily(info, now);
           if (why) { dropped.daily.push(`${show.name} (${why})`); continue; }
           if (MAX_AGE_DAYS > 0) {
@@ -227,7 +231,7 @@ async function filterShows(shows, now = Date.now()) {
           }
         }
       }
-      out[i] = { ...show, episodes: eps, category: classify(eps, info, now) };
+      out[i] = { ...show, episodes: eps, category: classify(eps, info, now), genres: (info && info.genreNames) || [] };
     }
   }
   await Promise.all(Array.from({ length: 8 }, worker));
@@ -235,8 +239,8 @@ async function filterShows(shows, now = Date.now()) {
   // dropped pack or old re-post higher up does not pull the show forward.
   const rank = (s) => Math.min(...s.episodes.map((t) => (s.pos && s.pos[t]) || Infinity));
   const kept = out.filter(Boolean).sort((a, b) => rank(a) - rank(b));
-  console.log(`filter: ${shows.length} shows -> ${kept.length} kept (packs only: ${dropped.packs.length}, old re-posts: ${dropped.old.length}, daily shows: ${dropped.daily.length}, no date info: ${unknown})`);
-  for (const [label, list] of [['daily shows', dropped.daily], ['old re-posts', dropped.old], ['pack only', dropped.packs]]) {
+  console.log(`filter: ${shows.length} shows -> ${kept.length} kept (packs only: ${dropped.packs.length}, old re-posts: ${dropped.old.length}, daily shows: ${dropped.daily.length}, blocked genre: ${dropped.genre.length}, no date info: ${unknown})`);
+  for (const [label, list] of [['blocked genre', dropped.genre], ['daily shows', dropped.daily], ['old re-posts', dropped.old], ['pack only', dropped.packs]]) {
     if (list.length) console.log(`dropped as ${label}:\n  ` + list.sort().join('\n  '));
   }
   return kept;
@@ -269,6 +273,7 @@ function toMeta(show) {
     background: `https://images.metahub.space/background/medium/${show.id}/img`,
     logo: `https://images.metahub.space/logo/medium/${show.id}/img`,
     posterShape: 'poster',
+    genres: show.genres && show.genres.length ? show.genres : undefined,
     description: eps ? `Latest: ${eps}` : undefined,
   };
 }

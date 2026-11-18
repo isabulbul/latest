@@ -4,7 +4,7 @@ const { scrape } = require('./scraper');
 
 const PORT = +process.env.PORT || 7000;
 const REFRESH_MS = (+process.env.REFRESH_MINUTES || 60) * 60 * 1000;
-const { manifest, CATALOGS, PAGE_SIZE } = require('./manifest');
+const { manifest: baseManifest, CATALOGS, PAGE_SIZE, withGenres, byGenre } = require('./manifest');
 
 
 const cache = { lists: { all: [] }, updatedAt: 0, lastError: null };
@@ -39,7 +39,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, {});
   const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
 
-  if (path === '/' || path === '/manifest.json') return send(res, 200, manifest, 3600);
+  if (path === '/' || path === '/manifest.json') return send(res, 200, cache.updatedAt ? withGenres(cache.lists) : baseManifest, 3600);
 
   if (path === '/health') {
     return send(res, 200, { shows: cache.lists.all.length, updatedAt: cache.updatedAt ? new Date(cache.updatedAt).toISOString() : null, lastError: cache.lastError });
@@ -50,11 +50,12 @@ const server = http.createServer(async (req, res) => {
   const cat = m && CATALOGS.find((c) => c.id === m[1]);
   if (cat) {
     if (!cache.updatedAt) await refresh(); // first request before initial scrape finished
-    const skip = Math.max(0, +(new URLSearchParams(m[2] || '').get('skip')) || 0);
+    const extra = new URLSearchParams(m[2] || '');
+    const skip = Math.max(0, +extra.get('skip') || 0);
     // Remaining time until the next hourly refresh, so clients re-ask right after it.
     const age = Math.floor((Date.now() - cache.updatedAt) / 1000);
     const maxAge = cache.updatedAt ? Math.max(60, Math.min(3600, REFRESH_MS / 1000 - age)) : 60;
-    return send(res, 200, { metas: (cache.lists[cat.key] || []).slice(skip, skip + PAGE_SIZE) }, maxAge);
+    return send(res, 200, { metas: byGenre(cache.lists[cat.key] || [], extra.get('genre')).slice(skip, skip + PAGE_SIZE) }, maxAge);
   }
 
   send(res, 404, { err: 'not found' });

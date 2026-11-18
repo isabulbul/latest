@@ -12,7 +12,7 @@ const CATALOG_ID = CATALOGS[0].id;
 
 const manifest = {
   id: 'community.rmz.latestepisodes',
-  version: '1.3.0',
+  version: '1.4.0',
   name: 'Calendar Episodes',
   description: 'Shows with the newest episodes listed on rmz.cr, refreshed hourly.',
   resources: ['catalog'],
@@ -22,4 +22,17 @@ const manifest = {
   behaviorHints: { configurable: false },
 };
 
-module.exports = { manifest, CATALOGS, CATALOG_ID, PAGE_SIZE };
+// Adds a genre picker to every catalog, listing the genres present in the data.
+function withGenres(lists) {
+  const count = new Map();
+  for (const meta of lists.all || []) for (const g of meta.genres || []) count.set(g, (count.get(g) || 0) + 1);
+  const options = [...count.keys()].sort((a, b) => a.localeCompare(b));
+  return {
+    ...manifest,
+    catalogs: manifest.catalogs.map((c) => ({ ...c, extra: [{ name: 'genre', options, isRequired: false }] })),
+  };
+}
+
+const byGenre = (items, genre) => (genre ? items.filter((m) => (m.genres || []).includes(genre)) : items);
+
+module.exports = { manifest, CATALOGS, CATALOG_ID, PAGE_SIZE, withGenres, byGenre };
