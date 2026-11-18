@@ -142,7 +142,7 @@ const DAILY_MIN_DAYS = +process.env.DAILY_MIN_DAYS || 5;
 const EXCLUDE_GENRES = (process.env.EXCLUDE_GENRES ?? 'Talk-Show,News').split(',').map((g) => g.trim().toLowerCase()).filter(Boolean);
 const CINEMETA = 'https://v3-cinemeta.strem.io/meta/series/';
 // Shows with any of these Cinemeta genres never enter the catalogs.
-const BLOCK_GENRES = (process.env.BLOCK_GENRES ?? 'Reality-TV').split(',').map((g) => g.trim().toLowerCase()).filter(Boolean);
+const BLOCK_GENRES = (process.env.BLOCK_GENRES ?? 'Reality-TV,Game-Show,Soap,Talk-Show').split(',').map((g) => g.trim().toLowerCase()).filter(Boolean);
 const DAY = 86400000;
 
 // Cinemeta mixes IMDb-style genres ("Sci-Fi", "Reality-TV") with TMDB-style
