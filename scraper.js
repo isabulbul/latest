@@ -145,6 +145,27 @@ const CINEMETA = 'https://v3-cinemeta.strem.io/meta/series/';
 const BLOCK_GENRES = (process.env.BLOCK_GENRES ?? 'Reality-TV').split(',').map((g) => g.trim().toLowerCase()).filter(Boolean);
 const DAY = 86400000;
 
+// Cinemeta mixes IMDb-style genres ("Sci-Fi", "Reality-TV") with TMDB-style
+// ones ("Sci-Fi & Fantasy", "Reality"); map them onto one set of names.
+const GENRE_MAP = {
+  'action & adventure': ['Action', 'Adventure'],
+  'sci-fi & fantasy': ['Sci-Fi', 'Fantasy'],
+  'science fiction': ['Sci-Fi'],
+  'war & politics': ['War'],
+  reality: ['Reality-TV'],
+  talk: ['Talk-Show'],
+  kids: ['Family'],
+};
+function normalizeGenres(list) {
+  const out = [];
+  for (const raw of list) {
+    const g = String(raw).trim();
+    if (!g) continue;
+    for (const name of GENRE_MAP[g.toLowerCase()] || [g]) if (!out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 async function cinemeta(id) {
   // { dates: Map "season:episode" -> timestamp, genres: [lowercase] }, or null when the lookup fails.
   try {
@@ -156,7 +177,7 @@ async function cinemeta(id) {
       const t = Date.parse(v.released || v.firstAired || '');
       if (!Number.isNaN(t)) dates.set(`${+v.season}:${+(v.episode ?? v.number)}`, t);
     }
-    const names = (meta.genres || meta.genre || []).map((g) => String(g).trim()).filter(Boolean);
+    const names = normalizeGenres(meta.genres || meta.genre || []);
     return { dates, genres: names.map((g) => g.toLowerCase()), genreNames: names };
   } catch { return null; }
 }
