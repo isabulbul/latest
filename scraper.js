@@ -273,8 +273,106 @@ function toMeta(show) {
   };
 }
 
+// ---- Second source: EZTV ---------------------------------------------------
+// get-torrents lists the newest TV torrents (100 per page) with imdb_id,
+// season and episode fields, so no HTML parsing is needed.
+const EZTV_URL = (process.env.EZTV_URL ?? 'https://eztvx.to').replace(/\/+$/, ''); // empty = off
+const EZTV_PAGES = +process.env.EZTV_PAGES || 12; // ~3 pages per day
+const EZTV_FILE = process.env.EZTV_FILE || '';      // offline testing: JSON array of torrents
+const pad2 = (n) => String(n).padStart(2, '0');
+
+async function fetchJson(url) {
+  let firstError;
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(30000) });
+    const text = await res.text();
+    if (res.ok) return JSON.parse(text);
+    firstError = new Error('HTTP ' + res.status);
+  } catch (err) { firstError = err; }
+  if (!FLARESOLVERR_URL) throw firstError;
+  // Behind a challenge: let FlareSolverr's browser load it; Chrome shows JSON inside <pre>.
+  const html = await fetchUrl(url);
+  const pre = /<pre[^>]*>([\s\S]*?)<\/pre>/i.exec(html);
+  return JSON.parse(decode(pre ? pre[1] : html.replace(/<[^>]+>/g, '')));
+}
+
+function eztvName(title) {
+  const base = title.replace(/\s+EZTV$/i, '').split(/\s+S\d+E\d+/i)[0].trim();
+  const noYear = base.replace(/\s+\(?(19|20)\d{2}\)?$/, '').trim();
+  return noYear || base;
+}
+
+async function fetchEztv() {
+  let torrents = [];
+  if (EZTV_FILE) {
+    torrents = JSON.parse(fs.readFileSync(EZTV_FILE, 'utf8'));
+  } else {
+    for (let page = 1; page <= EZTV_PAGES; page++) {
+      const data = await fetchJson(`${EZTV_URL}/api/get-torrents?limit=100&page=${page}`);
+      const list = data.torrents || [];
+      torrents.push(...list);
+      if (list.length < 100) break;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  torrents.sort((x, y) => (+y.date_released_unix || 0) - (+x.date_released_unix || 0));
+  const shows = new Map();
+  torrents.forEach((t, i) => {
+    const imdb = String(t.imdb_id || '').replace(/^tt/, '');
+    const season = +t.season;
+    const episode = +t.episode;
+    if (!/^\d+$/.test(imdb) || +imdb === 0) return;   // no IMDb id
+    if (!(season > 0) || !(episode > 0)) return;        // date-named releases / specials
+    const id = 'tt' + imdb.padStart(7, '0');
+    const tag = `S${pad2(season)}E${pad2(episode)}`;
+    let show = shows.get(id);
+    if (!show) { show = { id, name: eztvName(t.title || ''), url: '', episodes: [], pos: {} }; shows.set(id, show); }
+    if (!show.episodes.includes(tag)) { show.episodes.push(tag); show.pos[tag] = i + 1; }
+  });
+  console.log(`source eztv: ${torrents.length} torrents, ${shows.size} shows`);
+  return { name: 'eztv', shows: [...shows.values()], length: torrents.length };
+}
+
+// Positions are turned into 0..1 fractions of each source's list so that two
+// lists of different lengths (both newest first) can be ordered together.
+function mergeSources(sources) {
+  const merged = new Map();
+  const seen = {};
+  for (const src of sources) {
+    for (const show of src.shows) {
+      (seen[show.id] = seen[show.id] || new Set()).add(src.name);
+      let m = merged.get(show.id);
+      if (!m) { m = { ...show, episodes: [], pos: {} }; merged.set(show.id, m); }
+      for (const t of show.episodes) {
+        const frac = (show.pos[t] || src.length) / src.length;
+        if (!m.episodes.includes(t)) m.episodes.push(t);
+        m.pos[t] = Math.min(m.pos[t] ?? Infinity, frac);
+      }
+    }
+  }
+  const counts = {};
+  for (const set of Object.values(seen)) {
+    const key = [...set].sort().join('+');
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  console.log('merged: ' + Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ') + `, total ${merged.size}`);
+  return [...merged.values()];
+}
+
 async function scrape() {
-  const shows = await filterShows(parse(await fetchHtml()));
+  const sources = [];
+  try {
+    const shows = parse(await fetchHtml());
+    const length = Math.max(1, ...shows.flatMap((s) => Object.values(s.pos)));
+    console.log(`source rmz: ${shows.length} shows`);
+    sources.push({ name: 'rmz', shows, length });
+  } catch (err) { console.error(`source rmz failed: ${err.message}`); }
+  if (EZTV_URL || EZTV_FILE) {
+    try { sources.push(await fetchEztv()); } catch (err) { console.error(`source eztv failed: ${err.message}`); }
+  }
+  if (!sources.length) throw new Error('All sources failed');
+
+  const shows = await filterShows(mergeSources(sources));
   const lists = { all: [], new: [], returning: [], ongoing: [] };
   for (const show of shows) {
     const meta = toMeta(show);
@@ -285,4 +383,4 @@ async function scrape() {
   return lists;
 }
 
-module.exports = { scrape, parse, toMeta, filterShows, extractMirrors };
+module.exports = { scrape, parse, toMeta, filterShows, extractMirrors, mergeSources, eztvName };
