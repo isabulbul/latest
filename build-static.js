@@ -3,7 +3,7 @@
 // Usage: node build-static.js <output-dir>
 const fs = require('fs');
 const path = require('path');
-const { scrape } = require('./scraper');
+const { scrape, tvmazeCache } = require('./scraper');
 const { CATALOGS, PAGE_SIZE, withGenres, byGenre } = require('./manifest');
 const EXTRA_EMPTY_PAGES = 200; // empty pages beyond the end of each list
 const GENRE_EXTRA_PAGES = 20;  // same, for genre-filtered lists
@@ -53,5 +53,6 @@ const COMMON_STEPS = [20, 25, 50, 100]; // page sizes clients commonly ask with
   console.log(`genres: ${genres.join(', ')} (${files} page files)`);
   fs.writeFileSync(path.join(out, 'index.html'),
     `<!doctype html><meta charset="utf-8"><title>${manifest.name}</title><p>${manifest.name} — ${metas.length} shows, updated ${new Date().toISOString()}</p><p>Install: add this site's <a href="manifest.json">manifest.json</a> URL in Nuvio or Stremio.</p>`);
+  write(path.join(out, 'tvmaze-cache.json'), tvmazeCache); // reused by the next run
   console.log(`Wrote ${metas.length} shows to ${out}`);
 })().catch((err) => { console.error('Build failed:', err.message); process.exit(1); });

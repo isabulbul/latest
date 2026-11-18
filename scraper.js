@@ -142,6 +142,16 @@ const DAILY_MIN_DAYS = +process.env.DAILY_MIN_DAYS || 5;
 const EXCLUDE_GENRES = (process.env.EXCLUDE_GENRES ?? 'Talk-Show,News').split(',').map((g) => g.trim().toLowerCase()).filter(Boolean);
 const CINEMETA = 'https://v3-cinemeta.strem.io/meta/series/';
 // Shows with any of these Cinemeta genres never enter the catalogs.
+// Hand-made blocklist for shows whose Cinemeta genres do not give them away.
+// blocklist.txt: one IMDb id (tt0419336) or exact show name per line, # for comments.
+const BLOCKLIST_FILE = process.env.BLOCKLIST_FILE || require('path').join(__dirname, 'blocklist.txt');
+function loadBlocklist() {
+  try {
+    return fs.readFileSync(BLOCKLIST_FILE, 'utf8').split(/\r?\n/)
+      .map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean);
+  } catch { return []; }
+}
+const BLOCKLIST = loadBlocklist();
 const BLOCK_GENRES = (process.env.BLOCK_GENRES ?? 'Reality-TV,Game-Show,Soap,Talk-Show').split(',').map((g) => g.trim().toLowerCase()).filter(Boolean);
 const DAY = 86400000;
 
@@ -214,9 +224,57 @@ function classify(eps, info, now) {
   return hasPremiere ? fresh : 'ongoing'; // no air date: go by whether episode 1 is in the list
 }
 
+// ---- Second genre check: TVmaze ------------------------------------------
+// TVmaze gives every show a "type" (Scripted, Reality, Talk Show, Game Show,
+// Documentary, ...), which catches shows whose Cinemeta genres miss it, e.g.
+// Homes Under the Hammer: Cinemeta "Documentary", TVmaze "Reality".
+// Lookups are cached on the published site so each show is asked about once.
+const TVMAZE = process.env.TVMAZE !== '0';
+const TVMAZE_BLOCK_TYPES = (process.env.TVMAZE_BLOCK_TYPES ?? 'Reality,Game Show,Talk Show').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+const TVMAZE_CACHE_DAYS = 30;
+const SITE_URL = process.env.SITE_URL || (process.env.GITHUB_REPOSITORY
+  ? `https://${process.env.GITHUB_REPOSITORY.split('/')[0].toLowerCase()}.github.io/${process.env.GITHUB_REPOSITORY.split('/')[1]}/`
+  : '');
+const tvmazeCache = {}; // imdb id -> { type, genres, at } (type null = not on TVmaze)
+let tvmazeStats = { cached: 0, fetched: 0, failed: 0 };
+let nextSlot = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function loadTvmazeCache() {
+  if (!TVMAZE || !SITE_URL) return;
+  try {
+    const res = await fetch(SITE_URL + 'tvmaze-cache.json', { signal: AbortSignal.timeout(15000) });
+    if (res.ok) Object.assign(tvmazeCache, await res.json());
+  } catch { /* first run or site down: start empty */ }
+}
+
+async function tvmaze(id) {
+  const hit = tvmazeCache[id];
+  if (hit && Date.now() - hit.at < TVMAZE_CACHE_DAYS * DAY) { tvmazeStats.cached++; return hit; }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // Stay under TVmaze's limit (20 calls / 10 s) even with parallel workers.
+    const wait = Math.max(0, nextSlot - Date.now());
+    nextSlot = Math.max(Date.now(), nextSlot) + 600;
+    await sleep(wait);
+    try {
+      const res = await fetch(`https://api.tvmaze.com/lookup/shows?imdb=${id}`, { signal: AbortSignal.timeout(15000) });
+      if (res.status === 429) { await sleep(10000); continue; }
+      if (res.status === 404) { tvmazeStats.fetched++; return (tvmazeCache[id] = { type: null, genres: [], at: Date.now() }); }
+      if (!res.ok) break;
+      const show = await res.json();
+      tvmazeStats.fetched++;
+      return (tvmazeCache[id] = { type: show.type || null, genres: show.genres || [], at: Date.now() });
+    } catch { break; }
+  }
+  tvmazeStats.failed++;
+  return hit || null; // unknown this time: do not block on it
+}
+
 async function filterShows(shows, now = Date.now()) {
   const cutoff = now - MAX_AGE_DAYS * DAY;
   const dropped = { packs: [], old: [], daily: [], genre: [] };
+  await loadTvmazeCache();
+  tvmazeStats = { cached: 0, fetched: 0, failed: 0 };
   let unknown = 0;
   const out = new Array(shows.length).fill(null);
   let next = 0;
@@ -230,6 +288,9 @@ async function filterShows(shows, now = Date.now()) {
         eps = eps.filter((t) => /^S\d+E\d+/i.test(t));
         if (!eps.length) { dropped.packs.push(show.name); continue; }
       }
+      if (BLOCKLIST.includes(show.id) || BLOCKLIST.includes(show.name.toLowerCase())) {
+        dropped.genre.push(`${show.name} [${show.id}] - blocklist.txt`); continue;
+      }
       let info = null;
       { // air dates: needed for the age filter and to classify
         info = await cinemeta(show.id);
@@ -238,7 +299,7 @@ async function filterShows(shows, now = Date.now()) {
           if (!KEEP_UNKNOWN) continue;
         } else {
           const banned = info.genres.find((g) => BLOCK_GENRES.includes(g));
-          if (banned) { dropped.genre.push(`${show.name} (${banned})`); continue; }
+          if (banned) { dropped.genre.push(`${show.name} [${show.id}] - Cinemeta: ${info.genreNames.join(', ')}`); continue; }
           const why = FILTER_DAILY && isDaily(info, now);
           if (why) { dropped.daily.push(`${show.name} (${why})`); continue; }
           if (MAX_AGE_DAYS > 0) {
@@ -252,7 +313,11 @@ async function filterShows(shows, now = Date.now()) {
           }
         }
       }
-      out[i] = { ...show, episodes: eps, category: classify(eps, info, now), genres: (info && info.genreNames) || [] };
+      const tv = TVMAZE ? await tvmaze(show.id) : null;
+      if (tv && tv.type && TVMAZE_BLOCK_TYPES.includes(tv.type.toLowerCase())) {
+        dropped.genre.push(`${show.name} [${show.id}] - TVmaze: ${tv.type}; Cinemeta: ${(info && info.genreNames.join(', ')) || 'none'}`); continue;
+      }
+      out[i] = { ...show, episodes: eps, category: classify(eps, info, now), genres: (info && info.genreNames) || [], tvType: tv && tv.type };
     }
   }
   await Promise.all(Array.from({ length: 8 }, worker));
@@ -262,8 +327,10 @@ async function filterShows(shows, now = Date.now()) {
   const kept = out.filter(Boolean).sort((a, b) => rank(a) - rank(b));
   console.log(`filter: ${shows.length} shows -> ${kept.length} kept (packs only: ${dropped.packs.length}, old re-posts: ${dropped.old.length}, daily shows: ${dropped.daily.length}, blocked genre: ${dropped.genre.length}, no date info: ${unknown})`);
   for (const [label, list] of [['blocked genre', dropped.genre], ['daily shows', dropped.daily], ['old re-posts', dropped.old], ['pack only', dropped.packs]]) {
-    if (list.length) console.log(`dropped as ${label}:\n  ` + list.sort().join('\n  '));
+    if (list.length) console.log(`dropped as ${label} (${list.length}):\n  ` + list.sort().join('\n  '));
   }
+  if (TVMAZE) console.log(`tvmaze: ${tvmazeStats.cached} cached, ${tvmazeStats.fetched} looked up, ${tvmazeStats.failed} failed`);
+  console.log(`kept (${kept.length}):\n  ` + kept.map((k) => `${k.name} [${k.id}] ${k.category} - Cinemeta: ${(k.genres || []).join(', ') || 'none'}; TVmaze: ${k.tvType || 'none'}`).sort().join('\n  '));
   return kept;
 }
 
@@ -409,4 +476,4 @@ async function scrape() {
   return lists;
 }
 
-module.exports = { scrape, parse, toMeta, filterShows, extractMirrors, mergeSources, eztvName };
+module.exports = { tvmazeCache, scrape, parse, toMeta, filterShows, extractMirrors, mergeSources, eztvName };
