@@ -232,6 +232,8 @@ function classify(eps, info, now) {
 const TVMAZE = process.env.TVMAZE !== '0';
 const TVMAZE_BLOCK_TYPES = (process.env.TVMAZE_BLOCK_TYPES ?? 'Reality,Game Show,Talk Show').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
 const TVMAZE_CACHE_DAYS = 30;
+// Scripted shows TVmaze schedules on 5+ weekdays are soaps (e.g. The Young and the Restless, Mon-Fri).
+const TVMAZE_SOAP_DAYS = +process.env.TVMAZE_SOAP_DAYS || 5;
 const SITE_URL = process.env.SITE_URL || (process.env.GITHUB_REPOSITORY
   ? `https://${process.env.GITHUB_REPOSITORY.split('/')[0].toLowerCase()}.github.io/${process.env.GITHUB_REPOSITORY.split('/')[1]}/`
   : '');
@@ -250,7 +252,7 @@ async function loadTvmazeCache() {
 
 async function tvmaze(id) {
   const hit = tvmazeCache[id];
-  if (hit && Date.now() - hit.at < TVMAZE_CACHE_DAYS * DAY) { tvmazeStats.cached++; return hit; }
+  if (hit && hit.days && Date.now() - hit.at < TVMAZE_CACHE_DAYS * DAY) { tvmazeStats.cached++; return hit; }
   for (let attempt = 0; attempt < 3; attempt++) {
     // Stay under TVmaze's limit (20 calls / 10 s) even with parallel workers.
     const wait = Math.max(0, nextSlot - Date.now());
@@ -259,11 +261,11 @@ async function tvmaze(id) {
     try {
       const res = await fetch(`https://api.tvmaze.com/lookup/shows?imdb=${id}`, { signal: AbortSignal.timeout(15000) });
       if (res.status === 429) { await sleep(10000); continue; }
-      if (res.status === 404) { tvmazeStats.fetched++; return (tvmazeCache[id] = { type: null, genres: [], at: Date.now() }); }
+      if (res.status === 404) { tvmazeStats.fetched++; return (tvmazeCache[id] = { type: null, genres: [], days: [], at: Date.now() }); }
       if (!res.ok) break;
       const show = await res.json();
       tvmazeStats.fetched++;
-      return (tvmazeCache[id] = { type: show.type || null, genres: show.genres || [], at: Date.now() });
+      return (tvmazeCache[id] = { type: show.type || null, genres: show.genres || [], days: (show.schedule && show.schedule.days) || [], at: Date.now() });
     } catch { break; }
   }
   tvmazeStats.failed++;
@@ -317,7 +319,10 @@ async function filterShows(shows, now = Date.now()) {
       if (tv && tv.type && TVMAZE_BLOCK_TYPES.includes(tv.type.toLowerCase())) {
         dropped.genre.push(`${show.name} [${show.id}] - TVmaze: ${tv.type}; Cinemeta: ${(info && info.genreNames.join(', ')) || 'none'}`); continue;
       }
-      out[i] = { ...show, episodes: eps, category: classify(eps, info, now), genres: (info && info.genreNames) || [], tvType: tv && tv.type };
+      if (tv && tv.type === 'Scripted' && (tv.days || []).length >= TVMAZE_SOAP_DAYS) {
+        dropped.genre.push(`${show.name} [${show.id}] - TVmaze: Scripted, airs ${tv.days.length} days a week (soap)`); continue;
+      }
+      out[i] = { ...show, episodes: eps, category: classify(eps, info, now), genres: (info && info.genreNames) || [], tvType: tv && tv.type, tvDays: tv && tv.days };
     }
   }
   await Promise.all(Array.from({ length: 8 }, worker));
@@ -330,7 +335,7 @@ async function filterShows(shows, now = Date.now()) {
     if (list.length) console.log(`dropped as ${label} (${list.length}):\n  ` + list.sort().join('\n  '));
   }
   if (TVMAZE) console.log(`tvmaze: ${tvmazeStats.cached} cached, ${tvmazeStats.fetched} looked up, ${tvmazeStats.failed} failed`);
-  console.log(`kept (${kept.length}):\n  ` + kept.map((k) => `${k.name} [${k.id}] ${k.category} - Cinemeta: ${(k.genres || []).join(', ') || 'none'}; TVmaze: ${k.tvType || 'none'}`).sort().join('\n  '));
+  console.log(`kept (${kept.length}):\n  ` + kept.map((k) => `${k.name} [${k.id}] ${k.category} - Cinemeta: ${(k.genres || []).join(', ') || 'none'}; TVmaze: ${k.tvType || 'none'}${k.tvDays && k.tvDays.length ? ` (${k.tvDays.length} days/week)` : ''}`).sort().join('\n  '));
   return kept;
 }
 
