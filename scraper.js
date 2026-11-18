@@ -135,6 +135,7 @@ function parse(html) {
 // 3) Optional (FILTER_DAILY=1): daily shows (soaps, late-night/talk shows, news) are dropped: by genre, or
 //    when episodes aired on DAILY_MIN_DAYS or more different days in the last 14.
 const FILTER_PACKS = process.env.FILTER_PACKS !== '0';
+const FILTER_YEAR_SEASONS = process.env.FILTER_YEAR_SEASONS !== '0'; // drop S2026E17-style releases
 const MAX_AGE_DAYS = process.env.MAX_AGE_DAYS === undefined ? 14 : +process.env.MAX_AGE_DAYS; // 0 = no date filter
 const KEEP_UNKNOWN = process.env.KEEP_UNKNOWN !== '0'; // keep shows/episodes Cinemeta has no date for
 const FILTER_DAILY = process.env.FILTER_DAILY === '1'; // off by default
@@ -274,7 +275,7 @@ async function tvmaze(id) {
 
 async function filterShows(shows, now = Date.now()) {
   const cutoff = now - MAX_AGE_DAYS * DAY;
-  const dropped = { packs: [], old: [], daily: [], genre: [] };
+  const dropped = { packs: [], old: [], daily: [], genre: [], year: [] };
   await loadTvmazeCache();
   tvmazeStats = { cached: 0, fetched: 0, failed: 0 };
   let unknown = 0;
@@ -289,6 +290,13 @@ async function filterShows(shows, now = Date.now()) {
       if (FILTER_PACKS) {
         eps = eps.filter((t) => /^S\d+E\d+/i.test(t));
         if (!eps.length) { dropped.packs.push(show.name); continue; }
+      }
+      if (FILTER_YEAR_SEASONS) {
+        // "S2026E17": the season is a year. Used by awards shows, documentary
+        // strands and other yearly broadcasts rather than real series.
+        const real = eps.filter((t) => { const m = /^S(\d+)E/i.exec(t); return !m || +m[1] < 1900; });
+        if (!real.length) { dropped.year.push(`${show.name} [${show.id}] (${eps.slice(0, 3).join(', ')})`); continue; }
+        eps = real;
       }
       if (BLOCKLIST.includes(show.id) || BLOCKLIST.includes(show.name.toLowerCase())) {
         dropped.genre.push(`${show.name} [${show.id}] - blocklist.txt`); continue;
@@ -330,8 +338,8 @@ async function filterShows(shows, now = Date.now()) {
   // dropped pack or old re-post higher up does not pull the show forward.
   const rank = (s) => Math.min(...s.episodes.map((t) => (s.pos && s.pos[t]) || Infinity));
   const kept = out.filter(Boolean).sort((a, b) => rank(a) - rank(b));
-  console.log(`filter: ${shows.length} shows -> ${kept.length} kept (packs only: ${dropped.packs.length}, old re-posts: ${dropped.old.length}, daily shows: ${dropped.daily.length}, blocked genre: ${dropped.genre.length}, no date info: ${unknown})`);
-  for (const [label, list] of [['blocked genre', dropped.genre], ['daily shows', dropped.daily], ['old re-posts', dropped.old], ['pack only', dropped.packs]]) {
+  console.log(`filter: ${shows.length} shows -> ${kept.length} kept (packs only: ${dropped.packs.length}, old re-posts: ${dropped.old.length}, daily shows: ${dropped.daily.length}, blocked genre: ${dropped.genre.length}, year as season: ${dropped.year.length}, no date info: ${unknown})`);
+  for (const [label, list] of [['blocked genre', dropped.genre], ['year as season', dropped.year], ['daily shows', dropped.daily], ['old re-posts', dropped.old], ['pack only', dropped.packs]]) {
     if (list.length) console.log(`dropped as ${label} (${list.length}):\n  ` + list.sort().join('\n  '));
   }
   if (TVMAZE) console.log(`tvmaze: ${tvmazeStats.cached} cached, ${tvmazeStats.fetched} looked up, ${tvmazeStats.failed} failed`);
