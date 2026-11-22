@@ -4,15 +4,15 @@ const PAGE_SIZE = 1000; // whole list in one response; no paging
 // key = which list from the scraper feeds the catalog
 const CATALOGS = [
   { id: 'rmz-latest-episodes', key: 'all', name: 'Calendar Episodes' },
-  { id: 'rmz-new-series', key: 'new', name: 'New Series' },
-  { id: 'rmz-returning-series', key: 'returning', name: 'Returning Series' },
-  { id: 'rmz-ongoing-series', key: 'ongoing', name: 'Ongoing Series' },
+  { id: 'rmz-new-series', key: 'new', name: 'Yeni Diziler' },
+  { id: 'rmz-returning-series', key: 'returning', name: 'Geri Dönen Diziler' },
+  { id: 'rmz-ongoing-series', key: 'ongoing', name: 'Devam Eden Diziler' },
 ];
 const CATALOG_ID = CATALOGS[0].id;
 
 const manifest = {
   id: 'community.rmz.latestepisodes',
-  version: '1.4.0',
+  version: '1.4.1',
   name: 'Calendar Episodes',
   description: 'Shows with the newest episodes listed on rmz.cr, refreshed hourly.',
   resources: ['catalog'],
