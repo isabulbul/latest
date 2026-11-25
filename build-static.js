@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { scrape, tvmazeCache } = require('./scraper');
-const { CATALOGS, PAGE_SIZE, withGenres, byGenre } = require('./manifest');
+const { CATALOGS, MIRROR_CATALOGS, PAGE_SIZE, withGenres, byGenre } = require('./manifest');
 const EXTRA_EMPTY_PAGES = 200; // empty pages beyond the end of each list
 const GENRE_EXTRA_PAGES = 20;  // same, for genre-filtered lists
 const COMMON_STEPS = [20, 25, 50, 100]; // page sizes clients commonly ask with
@@ -19,7 +19,7 @@ const COMMON_STEPS = [20, 25, 50, 100]; // page sizes clients commonly ask with
 
   const manifest = withGenres(lists);
   write(path.join(out, 'manifest.json'), manifest);
-  const genres = manifest.catalogs[0].extra[0].options;
+  const genres = manifest.catalogs.find((c) => c.extra).extra[0].options;
 
   // Static hosting cannot answer arbitrary ?skip values, and some clients
   // (Nuvio) ask for the next page even when the first one held everything.
@@ -51,6 +51,26 @@ const COMMON_STEPS = [20, 25, 50, 100]; // page sizes clients commonly ask with
     }
   }
   console.log(`genres: ${genres.join(', ')} (${files} page files)`);
+
+  // Mirrored catalogs: fetch the source list and re-serve it with our poster shape.
+  // A failed fetch writes an empty list so the rest of the addon still deploys.
+  for (const cat of MIRROR_CATALOGS) {
+    let items = [];
+    try {
+      const res = await fetch(cat.source, { signal: AbortSignal.timeout(30000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      items = ((await res.json()).metas || []).map((m) => ({ ...m, posterShape: cat.posterShape }));
+    } catch (err) {
+      console.error(`Mirror ${cat.id} failed: ${err.message}`);
+    }
+    const mdir = path.join(out, 'catalog', cat.type);
+    fs.mkdirSync(path.join(mdir, cat.id), { recursive: true });
+    write(path.join(mdir, `${cat.id}.json`), { metas: items.slice(0, PAGE_SIZE) });
+    for (const s of skips(items.length, EXTRA_EMPTY_PAGES)) {
+      write(path.join(mdir, cat.id, `skip=${s}.json`), { metas: items.slice(s, s + PAGE_SIZE) });
+    }
+    console.log(`mirror ${cat.id}: ${items.length} items`);
+  }
   fs.writeFileSync(path.join(out, 'index.html'),
     `<!doctype html><meta charset="utf-8"><title>${manifest.name}</title><p>${manifest.name} — ${metas.length} shows, updated ${new Date().toISOString()}</p><p>Install: add this site's <a href="manifest.json">manifest.json</a> URL in Nuvio or Stremio.</p>`);
   write(path.join(out, 'tvmaze-cache.json'), tvmazeCache); // reused by the next run

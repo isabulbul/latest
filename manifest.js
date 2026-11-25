@@ -10,14 +10,28 @@ const CATALOGS = [
 ];
 const CATALOG_ID = CATALOGS[0].id;
 
+// Mirrors of other addons' catalogs, re-served with landscape posters.
+const MIRROR_CATALOGS = [
+  {
+    type: 'tv',
+    id: 'anthology-canli-spor',
+    name: 'Canlı Spor',
+    source: 'https://falsisdev.github.io/anthology/stremio/catalog/tv/anthology_canli_spor.json',
+    posterShape: 'landscape',
+  },
+];
+
 const manifest = {
   id: 'community.rmz.latestepisodes',
-  version: '1.4.2',
+  version: '1.5.0',
   name: 'Calendar Episodes',
   description: 'Shows with the newest episodes listed on rmz.cr, refreshed hourly.',
   resources: ['catalog'],
-  types: ['series'],
-  catalogs: CATALOGS.map((c) => ({ type: 'series', id: c.id, name: c.name })),
+  types: ['series', 'tv'],
+  catalogs: [
+    ...CATALOGS.map((c) => ({ type: 'series', id: c.id, name: c.name })),
+    ...MIRROR_CATALOGS.map((c) => ({ type: c.type, id: c.id, name: c.name })),
+  ],
   idPrefixes: ['tt'],
   behaviorHints: { configurable: false },
 };
@@ -29,10 +43,10 @@ function withGenres(lists) {
   const options = [...count.keys()].sort((a, b) => a.localeCompare(b));
   return {
     ...manifest,
-    catalogs: manifest.catalogs.map((c) => ({ ...c, extra: [{ name: 'genre', options, isRequired: false }] })),
+    catalogs: manifest.catalogs.map((c) => (c.type === 'series' ? { ...c, extra: [{ name: 'genre', options, isRequired: false }] } : c)),
   };
 }
 
 const byGenre = (items, genre) => (genre ? items.filter((m) => (m.genres || []).includes(genre)) : items);
 
-module.exports = { manifest, CATALOGS, CATALOG_ID, PAGE_SIZE, withGenres, byGenre };
+module.exports = { manifest, CATALOGS, MIRROR_CATALOGS, CATALOG_ID, PAGE_SIZE, withGenres, byGenre };
